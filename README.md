@@ -58,9 +58,12 @@ Real-world referring expressions often require attribute, spatial and relational
 
 ## 📊 Results
 
+<img src="result.png" alt="Final Results" width="600"/>
+
+In the image above, the top row shows examples the model predicted correctly, while the bottom row illustrates the cases where its predictions were incorrect.
+
 | Metric            | Score        |
 |-------------------|--------------|
-| Mean IoU (mIoU)   | 0.60         |
 | Top-1 Accuracy    | 54.5 %       |
 | Top-5 Accuracy    | 85.2 %       |  
 > Failure cases (ambiguous text) highlight need for uncertainty estimation.
