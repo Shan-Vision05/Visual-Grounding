@@ -3,13 +3,13 @@
 A PyTorch-based visual grounding model that combines co-attention fusion with modular reasoning to localize image regions from natural language referring expressions.  
 
 
-## 📖 Overview
+## Overview
 
 Real-world referring expressions often require attribute, spatial and relational reasoning to pinpoint the correct object. Our two-stage architecture first extracts region proposals via a pretrained Faster R-CNN and then performs multi-step, module-specific reasoning using visual and textual features through a co-attention mechanism for interpretable, robust grounding .
 
 <!-- --- -->
 
-## 🏗 Model Architecture
+## Model Architecture
 
 <!-- ![Model Architecture](Archi.png) -->
 <img src="Archi.png" alt="Model Architecture" width="600"/>
@@ -33,7 +33,7 @@ Real-world referring expressions often require attribute, spatial and relational
 
 <!-- --- -->
 
-## 📚 Dataset & Preprocessing
+## Dataset & Preprocessing
 
 - **RefCOCOg (20% subset)**  
   – ~10 k train, 1 k val, 1 k test pairs  
@@ -44,7 +44,7 @@ Real-world referring expressions often require attribute, spatial and relational
 
 <!-- --- -->
 
-## 🏋️ Training
+## Training
 
 - **Epochs**: 40  
 - **Frozen**: Faster R-CNN backbone  
@@ -55,7 +55,7 @@ Real-world referring expressions often require attribute, spatial and relational
 
 <!-- --- -->
 
-## 📊 Results
+## Results
 
 <img src="result.png" alt="Final Results" width="600"/>
 
@@ -69,7 +69,7 @@ In the image above, the top row shows examples the model predicted correctly, wh
 
 <!-- --- -->
 
-## 🔍 Key Insights
+## Key Insights
 
 - **Precise Language Matters**: Ambiguity degrades performance.  
 - **Step-wise Reasoning**: Modular breakdown yields interpretability & robustness.  
@@ -96,13 +96,13 @@ In the image above, the top row shows examples the model predicted correctly, wh
 
 --- -->
 
-## 🤝 Ethical Considerations
+## Ethical Considerations
 
 Visual grounding in real-world settings risks bias, privacy intrusions and unexplainable decisions. Future work should include bias audits, low-confidence alerts, and transparent grounding logs to ensure fair, accountable deployment.
 
 <!-- --- -->
 
-<!-- ## 📑 Citation
+<!-- ## Citation
 
 If you use this project, please cite:
 
@@ -110,6 +110,6 @@ If you use this project, please cite:
 
 ---
 
-## 📄 License
+## License
 
 Released under the **MIT License**. See [LICENSE](LICENSE) for details.   -->
