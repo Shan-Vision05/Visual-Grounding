@@ -2,6 +2,8 @@ import torch
 from torchvision.models.detection import fasterrcnn_resnet50_fpn
 from torchvision.models._utils import IntermediateLayerGetter
 import torch.nn as nn
+from copy import deepcopy
+
 
 import random
 
@@ -115,7 +117,6 @@ class VisionEncoder(nn.Module):
 
         return new_boxes, objectsBlob
     
-from copy import deepcopy
 class LocationVisionEncoder(nn.Module):
     def __init__(self, device):
         super().__init__()

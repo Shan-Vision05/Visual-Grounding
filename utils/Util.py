@@ -1,5 +1,9 @@
 import torch
 from torchvision.ops import box_iou
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+
+from transformers import BertTokenizer
 
 from copy import deepcopy
 
@@ -35,8 +39,7 @@ def CreateBatchLabels(result, batch_boxes):
 
     return torch.tensor(indxs)
 
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
+
 
 def plot_image(indx, batch, pred):
 
