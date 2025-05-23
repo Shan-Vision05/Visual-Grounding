@@ -1,8 +1,7 @@
-# Visual-Grounding: Grounding Natural Language in Visual Chaos
+# Visual-Grounding
 
 A PyTorch-based visual grounding model that combines co-attention fusion with modular reasoning to localize image regions from natural language referring expressions.  
 
----
 
 ## 📖 Overview
 
