@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.amp import GradScaler, autocast
+from tqdm.auto import tqdm
 
 from utils.Util import CreateBatchLabels
 
@@ -41,7 +42,9 @@ class VisualGroundingTrainer:
         total_loss = 0.0
         total_acc = 0.0
 
-        for X_Img, X_Text, y_bbox in self.train_dataloader:
+        pbar = tqdm(self.train_dataloader, desc="  Train", leave=False,
+                    bar_format="{l_bar}{bar:30}{r_bar}")
+        for X_Img, X_Text, y_bbox in pbar:
             X_Img = X_Img.to(self.device, non_blocking=True)
             X_Text = self._move_text_to_device(X_Text, self.device)
             y_bbox = y_bbox.to(self.device, non_blocking=True)
@@ -59,8 +62,12 @@ class VisualGroundingTrainer:
             self.scaler.update()
 
             total_loss += loss.item()
-            total_acc += self._accuracy(y, y_pred.squeeze(-1).argmax(dim=1))
+            batch_acc = self._accuracy(y, y_pred.squeeze(-1).argmax(dim=1))
+            total_acc += batch_acc
 
+            pbar.set_postfix(loss=f"{loss.item():.4f}", acc=f"{batch_acc:.1f}%")
+
+        pbar.close()
         n = len(self.train_dataloader)
         return total_loss / n, total_acc / n
 
@@ -71,7 +78,9 @@ class VisualGroundingTrainer:
         total_loss = 0.0
         total_acc = 0.0
 
-        for X_Img, X_Text, y_bbox in self.test_dataloader:
+        pbar = tqdm(self.test_dataloader, desc="  Eval ", leave=False,
+                    bar_format="{l_bar}{bar:30}{r_bar}")
+        for X_Img, X_Text, y_bbox in pbar:
             X_Img = X_Img.to(self.device, non_blocking=True)
             X_Text = self._move_text_to_device(X_Text, self.device)
             y_bbox = y_bbox.to(self.device, non_blocking=True)
@@ -82,7 +91,11 @@ class VisualGroundingTrainer:
                 loss = self.loss_fn(y_pred.squeeze(-1), y.long())
 
             total_loss += loss.item()
-            total_acc += self._accuracy(y, y_pred.squeeze(-1).argmax(dim=1))
+            batch_acc = self._accuracy(y, y_pred.squeeze(-1).argmax(dim=1))
+            total_acc += batch_acc
 
+            pbar.set_postfix(loss=f"{loss.item():.4f}", acc=f"{batch_acc:.1f}%")
+
+        pbar.close()
         n = len(self.test_dataloader)
         return total_loss / n, total_acc / n
