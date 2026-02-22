@@ -1,21 +1,27 @@
+import logging
+import time
+
 import torch
 import torch.nn as nn
 from torch.amp import GradScaler, autocast
-from tqdm.auto import tqdm
 
 from utils.Util import CreateBatchLabels
+
+logger = logging.getLogger(__name__)
 
 
 class VisualGroundingTrainer:
     """Handles training and evaluation loops for the VisualGrounding model."""
 
     def __init__(self, model, device, train_dataloader, test_dataloader,
-                 lr=3e-4, weight_decay=1e-4, use_amp=True, image_size=512):
+                 lr=3e-4, weight_decay=1e-4, use_amp=True, image_size=512,
+                 log_every: int = 20):
         self.device = device
         self.model = model.to(device)
         self.train_dataloader = train_dataloader
         self.test_dataloader = test_dataloader
         self.image_size = image_size
+        self.log_every = log_every
 
         self.loss_fn = nn.CrossEntropyLoss()
         self.optimizer = torch.optim.Adam(
@@ -37,14 +43,14 @@ class VisualGroundingTrainer:
         return (torch.eq(y_true, y_pred).sum().item() / len(y_pred)) * 100.0
 
     # ------------------------------------------------------------------
-    def train_step(self) -> tuple[float, float]:
+    def train_step(self, epoch: int) -> tuple[float, float]:
         self.model.train()
         total_loss = 0.0
         total_acc = 0.0
+        n_batches = len(self.train_dataloader)
+        t0 = time.time()
 
-        pbar = tqdm(self.train_dataloader, desc="  Train", leave=False,
-                    bar_format="{l_bar}{bar:30}{r_bar}")
-        for X_Img, X_Text, y_bbox in pbar:
+        for i, (X_Img, X_Text, y_bbox) in enumerate(self.train_dataloader, 1):
             X_Img = X_Img.to(self.device, non_blocking=True)
             X_Text = self._move_text_to_device(X_Text, self.device)
             y_bbox = y_bbox.to(self.device, non_blocking=True)
@@ -65,22 +71,29 @@ class VisualGroundingTrainer:
             batch_acc = self._accuracy(y, y_pred.squeeze(-1).argmax(dim=1))
             total_acc += batch_acc
 
-            pbar.set_postfix(loss=f"{loss.item():.4f}", acc=f"{batch_acc:.1f}%")
+            if i % self.log_every == 0 or i == n_batches:
+                elapsed = time.time() - t0
+                avg_loss = total_loss / i
+                avg_acc = total_acc / i
+                eta = elapsed / i * (n_batches - i)
+                logger.info(
+                    "  Epoch %2d Train [%3d/%d] | loss %.4f | acc %.1f%% | %.1fs elapsed | ETA %.0fs",
+                    epoch, i, n_batches, avg_loss, avg_acc, elapsed, eta,
+                )
 
-        pbar.close()
         n = len(self.train_dataloader)
         return total_loss / n, total_acc / n
 
     # ------------------------------------------------------------------
     @torch.inference_mode()
-    def eval_step(self) -> tuple[float, float]:
+    def eval_step(self, epoch: int) -> tuple[float, float]:
         self.model.eval()
         total_loss = 0.0
         total_acc = 0.0
+        n_batches = len(self.test_dataloader)
+        t0 = time.time()
 
-        pbar = tqdm(self.test_dataloader, desc="  Eval ", leave=False,
-                    bar_format="{l_bar}{bar:30}{r_bar}")
-        for X_Img, X_Text, y_bbox in pbar:
+        for i, (X_Img, X_Text, y_bbox) in enumerate(self.test_dataloader, 1):
             X_Img = X_Img.to(self.device, non_blocking=True)
             X_Text = self._move_text_to_device(X_Text, self.device)
             y_bbox = y_bbox.to(self.device, non_blocking=True)
@@ -94,8 +107,15 @@ class VisualGroundingTrainer:
             batch_acc = self._accuracy(y, y_pred.squeeze(-1).argmax(dim=1))
             total_acc += batch_acc
 
-            pbar.set_postfix(loss=f"{loss.item():.4f}", acc=f"{batch_acc:.1f}%")
+            if i % self.log_every == 0 or i == n_batches:
+                elapsed = time.time() - t0
+                avg_loss = total_loss / i
+                avg_acc = total_acc / i
+                eta = elapsed / i * (n_batches - i)
+                logger.info(
+                    "  Epoch %2d Eval  [%3d/%d] | loss %.4f | acc %.1f%% | %.1fs elapsed | ETA %.0fs",
+                    epoch, i, n_batches, avg_loss, avg_acc, elapsed, eta,
+                )
 
-        pbar.close()
         n = len(self.test_dataloader)
         return total_loss / n, total_acc / n

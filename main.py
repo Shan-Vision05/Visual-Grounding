@@ -19,7 +19,6 @@ import sys
 
 import numpy as np
 import torch
-from tqdm.auto import tqdm
 
 from models.ModCoAttnModels import VisualGrounding
 from Trainer import VisualGroundingTrainer
@@ -119,9 +118,9 @@ def main() -> None:
     best_state = None
     epochs_no_improve = 0
 
-    for epoch in tqdm(range(1, args.epochs + 1), desc="Epochs"):
-        train_loss, train_acc = trainer.train_step()
-        val_loss, val_acc = trainer.eval_step()
+    for epoch in range(1, args.epochs + 1):
+        train_loss, train_acc = trainer.train_step(epoch)
+        val_loss, val_acc = trainer.eval_step(epoch)
 
         logger.info(
             "Epoch %3d | TrainLoss %.4f | TrainAcc %.2f%% | ValLoss %.4f | ValAcc %.2f%%",
