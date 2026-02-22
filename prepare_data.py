@@ -36,11 +36,26 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Download helpers
 # ---------------------------------------------------------------------------
+def _is_valid_zip(path: Path) -> bool:
+    """Return True if *path* is a valid zip archive."""
+    try:
+        with zipfile.ZipFile(path, "r") as zf:
+            zf.testzip()
+        return True
+    except (zipfile.BadZipFile, Exception):
+        return False
+
+
 def _download(url: str, dest: Path, retries: int = 3) -> None:
     """Download *url* to *dest* with retries and fallback to curl."""
     if dest.exists():
-        print(f"  [skip] {dest.name} already exists")
-        return
+        # If it looks like a zip filename, validate it
+        if dest.suffix.lower() == ".zip" and not _is_valid_zip(dest):
+            print(f"  {dest.name} exists but is corrupt — re-downloading")
+            dest.unlink()
+        else:
+            print(f"  [skip] {dest.name} already exists")
+            return
     print(f"  Downloading {url} ...")
     dest.parent.mkdir(parents=True, exist_ok=True)
 
