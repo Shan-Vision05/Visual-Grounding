@@ -55,28 +55,44 @@ pip install --quiet --upgrade pip
 pip install --quiet -r "${SLURM_SUBMIT_DIR}/requirements.txt"
 
 # -------------------------------------------------------------------
-# 2. Copy dataset into RAM  (/dev/shm = tmpfs, purely in-memory)
+# 2. Download & prepare data if not already present
+#    (RefCOCOg + COCO 2014 images — runs once, cached in .cache/)
+# -------------------------------------------------------------------
+SRC_DATA="${SLURM_SUBMIT_DIR}/data"
+CACHE_DIR="${SLURM_SUBMIT_DIR}/.cache"
+
+if [[ ! -d "${SRC_DATA}/train/images" ]] || [[ ! -f "${SRC_DATA}/train/annotations_1.json" ]]; then
+    echo ">>> Data not found — running prepare_data.py ..."
+    python "${SLURM_SUBMIT_DIR}/prepare_data.py" \
+        --data_dir  "${SRC_DATA}" \
+        --cache_dir "${CACHE_DIR}"
+else
+    echo ">>> Data already present at ${SRC_DATA}"
+fi
+
+# -------------------------------------------------------------------
+# 3. Copy dataset into RAM  (/dev/shm = tmpfs, purely in-memory)
 #    This eliminates ALL disk I/O during training.
 # -------------------------------------------------------------------
 RAM_DATA="/dev/shm/${USER}_vg_data"
-SRC_DATA="${SLURM_SUBMIT_DIR}/data"
 
 if [[ ! -d "${RAM_DATA}" ]]; then
     echo ">>> Copying dataset into RAM (${RAM_DATA}) ..."
     mkdir -p "${RAM_DATA}"
-    cp -a "${SRC_DATA}/." "${RAM_DATA}/"
+    # Resolve symlinks during copy so RAM has real files
+    cp -a -L "${SRC_DATA}/." "${RAM_DATA}/"
     echo ">>> Dataset copied.  Size in RAM: $(du -sh "${RAM_DATA}" | cut -f1)"
 fi
 
 # -------------------------------------------------------------------
-# 3. HuggingFace cache on scratch (fast NVMe, avoids $HOME quota)
+# 4. HuggingFace cache on scratch (fast NVMe, avoids $HOME quota)
 # -------------------------------------------------------------------
 export HF_HOME="/scratch/alpine/${USER}/hf_cache"
 export TRANSFORMERS_CACHE="${HF_HOME}"
 mkdir -p "${HF_HOME}"
 
 # -------------------------------------------------------------------
-# 4. Performance flags for H100
+# 5. Performance flags for H100
 # -------------------------------------------------------------------
 export CUDA_LAUNCH_BLOCKING=0
 export TORCH_CUDNN_V8_API_ENABLED=1
@@ -85,7 +101,7 @@ export NCCL_P2P_DISABLE=0
 export NCCL_IB_DISABLE=0
 
 # -------------------------------------------------------------------
-# 5. Training hyper-parameters  (edit as needed)
+# 6. Training hyper-parameters  (edit as needed)
 # -------------------------------------------------------------------
 OUTPUT_DIR="${SLURM_SUBMIT_DIR}/outputs"
 EPOCHS=40
@@ -99,7 +115,7 @@ SEED=42
 mkdir -p "${OUTPUT_DIR}"
 
 # -------------------------------------------------------------------
-# 6. Launch training
+# 7. Launch training
 # -------------------------------------------------------------------
 echo ">>> Starting training ..."
 
@@ -117,7 +133,7 @@ python "${SLURM_SUBMIT_DIR}/main.py" \
     --fast
 
 # -------------------------------------------------------------------
-# 7. Cleanup RAM disk
+# 8. Cleanup RAM disk
 # -------------------------------------------------------------------
 echo ">>> Cleaning up RAM disk ..."
 rm -rf "${RAM_DATA}"
