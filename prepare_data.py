@@ -16,8 +16,11 @@ Usage
   python prepare_data.py                       # defaults to ./data
   python prepare_data.py --data_dir /scratch/alpine/$USER/vg_data
 
-On the cluster, run this BEFORE submitting the training job, e.g. from an
-`acompile` or `sinteractive` session so you have internet access.
+On CU Alpine, compute nodes have NO internet access.
+Run this BEFORE submitting the training job, from a compile node:
+  acompile
+  conda activate vg_env
+  python prepare_data.py --data_dir ./data --cache_dir ./.cache
 """
 
 from __future__ import annotations
@@ -46,47 +49,67 @@ def _is_valid_zip(path: Path) -> bool:
         return False
 
 
-def _download(url: str, dest: Path, retries: int = 3) -> None:
-    """Download *url* to *dest* with retries and fallback to curl."""
+def _download(url: str | list[str], dest: Path, retries: int = 3) -> None:
+    """Download *url* to *dest* with retries and fallback to curl.
+
+    *url* can be a single URL string or a list of mirror URLs to try
+    in order.
+    """
     if dest.exists():
         # If it looks like a zip filename, validate it
         if dest.suffix.lower() == ".zip" and not _is_valid_zip(dest):
-            print(f"  {dest.name} exists but is corrupt — re-downloading")
+            print(f"  {dest.name} exists but is corrupt \u2014 re-downloading")
             dest.unlink()
         else:
             print(f"  [skip] {dest.name} already exists")
             return
-    print(f"  Downloading {url} ...")
+
+    urls = [url] if isinstance(url, str) else list(url)
     dest.parent.mkdir(parents=True, exist_ok=True)
 
-    # Try wget first (with --no-check-certificate for servers with SSL issues)
-    for attempt in range(1, retries + 1):
-        try:
-            subprocess.check_call(
-                ["wget", "--no-check-certificate", "--quiet",
-                 "--show-progress", "-O", str(dest), url],
-            )
-            return
-        except subprocess.CalledProcessError:
-            if dest.exists():
-                dest.unlink()  # remove partial download
-            if attempt < retries:
-                print(f"  wget attempt {attempt}/{retries} failed, retrying ...")
+    for mirror_idx, mirror_url in enumerate(urls):
+        label = f"[mirror {mirror_idx + 1}/{len(urls)}] " if len(urls) > 1 else ""
+        print(f"  {label}Downloading {mirror_url} ...")
 
-    # Fallback: try curl
-    print("  wget failed; falling back to curl ...")
-    try:
-        subprocess.check_call(
-            ["curl", "-L", "-k", "--progress-bar", "-o", str(dest), url],
-        )
-        return
-    except subprocess.CalledProcessError:
-        if dest.exists():
-            dest.unlink()
+        # Try wget (with --no-check-certificate for SSL issues)
+        for attempt in range(1, retries + 1):
+            try:
+                subprocess.check_call(
+                    ["wget", "--no-check-certificate", "--quiet",
+                     "--show-progress", "-O", str(dest), mirror_url],
+                )
+                if dest.suffix.lower() == ".zip" and not _is_valid_zip(dest):
+                    print(f"  Downloaded file is not a valid zip, trying next ...")
+                    dest.unlink()
+                    break  # skip to next mirror
+                return  # success
+            except subprocess.CalledProcessError:
+                if dest.exists():
+                    dest.unlink()
+                if attempt < retries:
+                    print(f"  wget attempt {attempt}/{retries} failed, retrying ...")
 
-    print(f"  ERROR: Could not download {url}", file=sys.stderr)
-    print(f"  The server may be temporarily unavailable.", file=sys.stderr)
-    print(f"  You can manually download the file and place it at: {dest}", file=sys.stderr)
+        # Fallback: try curl for this mirror
+        if not dest.exists():
+            print(f"  wget failed; trying curl ...")
+            try:
+                subprocess.check_call(
+                    ["curl", "-L", "-k", "--progress-bar", "-o",
+                     str(dest), mirror_url],
+                )
+                if dest.suffix.lower() == ".zip" and not _is_valid_zip(dest):
+                    print(f"  Downloaded file is not a valid zip, trying next ...")
+                    dest.unlink()
+                    continue
+                return  # success
+            except subprocess.CalledProcessError:
+                if dest.exists():
+                    dest.unlink()
+
+    # All mirrors exhausted
+    print(f"  ERROR: Could not download from any mirror.", file=sys.stderr)
+    print(f"  You can manually download the file and place it at: {dest}",
+          file=sys.stderr)
     sys.exit(1)
 
 
@@ -105,7 +128,13 @@ def _unzip(src: Path, dest: Path) -> None:
 # ---------------------------------------------------------------------------
 REFCOCOG_URLS = {
     # UMD split (Google-refexp partition, most common in papers)
-    "refs": "https://bvisionweb1.cs.unc.edu/licheng/referit/data/refcocog.zip",
+    # Primary: Wayback Machine mirror (original UNC server is dead)
+    # Fallback: original URL in case it comes back online
+    "refs": [
+        "https://web.archive.org/web/20230307030235/https://bvisionweb1.cs.unc.edu/licheng/referit/data/refcocog.zip",
+        "https://web.archive.org/web/20220413012904/https://bvisionweb1.cs.unc.edu/licheng/referit/data/refcocog.zip",
+        "https://bvisionweb1.cs.unc.edu/licheng/referit/data/refcocog.zip",
+    ],
     "instances": "http://images.cocodataset.org/annotations/annotations_trainval2014.zip",
 }
 

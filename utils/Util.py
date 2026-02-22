@@ -19,9 +19,9 @@ def _get_tokenizer() -> BertTokenizer:
 
 
 # ---------------------------------------------------------------------------
-def GetScores(boxes: torch.Tensor, label_box: torch.Tensor) -> int:
+def GetScores(boxes: torch.Tensor, label_box: torch.Tensor, image_size: int = 512) -> int:
     """Return the index of the proposal box with highest IoU to *label_box*."""
-    true_box = label_box.clone() * 512
+    true_box = label_box.clone() * image_size
     # label_box is [x, y, w, h] normalised → convert to [x1, y1, x2, y2]
     true_box[2] += true_box[0]
     true_box[3] += true_box[1]
@@ -30,7 +30,7 @@ def GetScores(boxes: torch.Tensor, label_box: torch.Tensor) -> int:
 
 
 def CreateBatchLabels(
-    proposals: list[torch.Tensor], batch_boxes: torch.Tensor
+    proposals: list[torch.Tensor], batch_boxes: torch.Tensor, image_size: int = 512,
 ) -> torch.Tensor:
     """Create a (B,) tensor of ground-truth proposal indices for each sample."""
     batch_size = len(proposals)
@@ -38,7 +38,7 @@ def CreateBatchLabels(
     for i in range(batch_size):
         n = min(len(proposals[i]), 10)
         boxes = proposals[i][:n]
-        indices.append(GetScores(boxes, batch_boxes[i]))
+        indices.append(GetScores(boxes, batch_boxes[i], image_size=image_size))
     # Pad if fewer proposals than expected (edge case)
     while len(indices) < batch_size:
         indices.append(0)

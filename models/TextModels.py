@@ -79,3 +79,8 @@ class LocationTextEncoder(_BaseTextEncoder):
     """Text encoder for spatial/location reasoning."""
     pass
 
+
+class RelationshipTextEncoder(_BaseTextEncoder):
+    """Text encoder for inter-object relationship reasoning (e.g. 'behind', 'next to')."""
+    pass
+

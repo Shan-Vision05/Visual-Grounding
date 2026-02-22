@@ -111,7 +111,7 @@ def main() -> None:
     trainer = VisualGroundingTrainer(
         model, device, train_loader, test_loader,
         lr=args.lr, weight_decay=args.weight_decay,
-        use_amp=args.amp,
+        use_amp=args.amp, image_size=args.image_size,
     )
 
     # --- training loop ---
