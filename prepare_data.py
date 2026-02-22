@@ -36,16 +36,43 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Download helpers
 # ---------------------------------------------------------------------------
-def _download(url: str, dest: Path) -> None:
-    """Download *url* to *dest* (skip if file exists)."""
+def _download(url: str, dest: Path, retries: int = 3) -> None:
+    """Download *url* to *dest* with retries and fallback to curl."""
     if dest.exists():
         print(f"  [skip] {dest.name} already exists")
         return
     print(f"  Downloading {url} ...")
     dest.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.check_call(
-        ["wget", "--quiet", "--show-progress", "-O", str(dest), url],
-    )
+
+    # Try wget first (with --no-check-certificate for servers with SSL issues)
+    for attempt in range(1, retries + 1):
+        try:
+            subprocess.check_call(
+                ["wget", "--no-check-certificate", "--quiet",
+                 "--show-progress", "-O", str(dest), url],
+            )
+            return
+        except subprocess.CalledProcessError:
+            if dest.exists():
+                dest.unlink()  # remove partial download
+            if attempt < retries:
+                print(f"  wget attempt {attempt}/{retries} failed, retrying ...")
+
+    # Fallback: try curl
+    print("  wget failed; falling back to curl ...")
+    try:
+        subprocess.check_call(
+            ["curl", "-L", "-k", "--progress-bar", "-o", str(dest), url],
+        )
+        return
+    except subprocess.CalledProcessError:
+        if dest.exists():
+            dest.unlink()
+
+    print(f"  ERROR: Could not download {url}", file=sys.stderr)
+    print(f"  The server may be temporarily unavailable.", file=sys.stderr)
+    print(f"  You can manually download the file and place it at: {dest}", file=sys.stderr)
+    sys.exit(1)
 
 
 def _unzip(src: Path, dest: Path) -> None:
