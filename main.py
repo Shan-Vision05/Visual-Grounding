@@ -1,64 +1,149 @@
-from Trainer import *
-from model.ModCoAttnModels import *
-from utils.Dataset import *
-import torch
+"""Visual Grounding – training entry-point.
+
+Usage examples
+--------------
+  # Local
+  python main.py --data_dir ./data --epochs 40 --batch_size 16
+
+  # On CU Blanca cluster
+  module load slurm/blanca && sbatch run_training.sbatch
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import os
+import random
+import sys
+
 import numpy as np
+import torch
 from tqdm.auto import tqdm
 
-def main():
-    train_dataloader = GetDataloader('/content/data/train', 16, 'train')
-    test_dataloader = GetDataloader('/content/data/test', 16, 'test')
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model = VisualGrounding(device)
+from models.ModCoAttnModels import VisualGrounding
+from Trainer import VisualGroundingTrainer
+from utils.Dataset import GetDataloader
 
-    trainer = VisualGroundingTrainer(model, device, train_dataloader, test_dataloader)
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+logger = logging.getLogger(__name__)
 
-    epochs = 40
-    best_val_loss = np.inf
-    best_model = None
 
-    num_epochs_without_improvement = 0
-    patience = 3
+# ---------------------------------------------------------------------------
+# Reproducibility
+# ---------------------------------------------------------------------------
+def seed_everything(seed: int = 42, fast: bool = False) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    if fast:
+        # Maximise throughput (H100 / A100) — minor non-determinism
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+    else:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
-    for epoch in tqdm(range(epochs)):
 
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Train Visual Grounding model")
+    p.add_argument("--data_dir", type=str, default="./data",
+                    help="Root directory containing train/ and test/ sub-dirs")
+    p.add_argument("--output_dir", type=str, default="./outputs",
+                    help="Where to save checkpoints and logs")
+    p.add_argument("--epochs", type=int, default=40)
+    p.add_argument("--batch_size", type=int, default=16)
+    p.add_argument("--lr", type=float, default=3e-4)
+    p.add_argument("--weight_decay", type=float, default=1e-4)
+    p.add_argument("--patience", type=int, default=5,
+                    help="Early-stopping patience (epochs)")
+    p.add_argument("--num_workers", type=int, default=4)
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--image_size", type=int, default=512)
+    p.add_argument("--amp", action="store_true", default=True,
+                    help="Use automatic mixed precision (default: on)")
+    p.add_argument("--no-amp", dest="amp", action="store_false")
+    p.add_argument("--fast", action="store_true", default=False,
+                    help="Enable TF32 + cuDNN benchmark for max GPU throughput")
+    return p.parse_args()
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+def main() -> None:
+    args = parse_args()
+    seed_everything(args.seed, fast=args.fast)
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    # --- device ---
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    logger.info("Using device: %s", device)
+
+    # --- data ---
+    train_dir = os.path.join(args.data_dir, "train")
+    test_dir = os.path.join(args.data_dir, "test")
+    train_loader = GetDataloader(
+        train_dir, batch_size=args.batch_size, split="train",
+        num_workers=args.num_workers, image_size=args.image_size,
+    )
+    test_loader = GetDataloader(
+        test_dir, batch_size=args.batch_size, split="test",
+        num_workers=args.num_workers, image_size=args.image_size,
+    )
+    logger.info("Train batches: %d | Test batches: %d", len(train_loader), len(test_loader))
+
+    # --- model & trainer ---
+    model = VisualGrounding(image_size=args.image_size)
+    trainer = VisualGroundingTrainer(
+        model, device, train_loader, test_loader,
+        lr=args.lr, weight_decay=args.weight_decay,
+        use_amp=args.amp,
+    )
+
+    # --- training loop ---
+    best_val_loss = float("inf")
+    best_state = None
+    epochs_no_improve = 0
+
+    for epoch in tqdm(range(1, args.epochs + 1), desc="Epochs"):
         train_loss, train_acc = trainer.train_step()
-        #   trainer.scheduler.step()
+        val_loss, val_acc = trainer.eval_step()
 
-        test_loss, test_acc = trainer.eval_step()
+        logger.info(
+            "Epoch %3d | TrainLoss %.4f | TrainAcc %.2f%% | ValLoss %.4f | ValAcc %.2f%%",
+            epoch, train_loss, train_acc, val_loss, val_acc,
+        )
 
-        if test_loss < best_val_loss:
-            best_val_loss = test_loss
-            best_model = model.state_dict()
-            num_epochs_without_improvement = 0
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_state = model.state_dict()
+            epochs_no_improve = 0
+            ckpt_path = os.path.join(args.output_dir, "best_model.pt")
+            torch.save(best_state, ckpt_path)
+            logger.info("  ✓ Saved best checkpoint (val_loss=%.4f)", val_loss)
         else:
-            num_epochs_without_improvement += 1
+            epochs_no_improve += 1
 
-        print(f'Epoch {epoch}, Train Loss: {train_loss:.3f}, Test Loss: {test_loss:.3f} Train Acc: {train_acc:.3f}, Test Acc: {test_acc:.3f}')
-        if num_epochs_without_improvement >= patience:
-            print("Early Stopping Triggered!!!")
+        if epochs_no_improve >= args.patience:
+            logger.info("Early stopping triggered after %d epochs without improvement.", args.patience)
             break
-    best_model_save = VisualGrounding(device)
 
-    # 2) Load your saved state dict
-    best_model_save.load_state_dict(best_model)
-
-    torch.save(best_model_save, "best_model.pth")
-
-    test_dataset = VG_Dataset('/content/data/test')
-
-    best_model_save.eval()
-    best_model_save = best_model_save.to(device)
-
-    with torch.inference_mode():
-
-        for batch, (X_Img, X_Text, y_bbox) in enumerate(test_dataloader):
-            X_Img, X_Text, y_bbox = X_Img.to(device), X_Text.to(device), y_bbox.to(device)
-
-            roi, y_pred = best_model_save(X_Img, X_Text['input_ids'], X_Text['attention_mask'])
-            y = CreateBatchLabels(roi, y_bbox).to(device)
-            plot_region_with_text(X_Img, X_Text['input_ids'], y_pred.squeeze(dim=-1).argmax(dim=1), roi, predict=True)
+    logger.info("Training complete. Best val loss: %.4f", best_val_loss)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
