@@ -3,7 +3,7 @@
 
 This script handles everything end-to-end:
   1. Downloads COCO 2014 train images  (~13 GB zip, ~83k images)
-  2. Downloads RefCOCOg annotations    (from refer / refcocog-umd split)
+  2. Downloads RefCOCOg annotations    (from HuggingFace or Wayback Machine)
   3. Converts into the flat format expected by VG_Dataset:
        data/{train,test}/images/<image_id>.jpg
        data/{train,test}/annotations_1.json
@@ -12,7 +12,7 @@ Each annotation entry: {"image_id": <int>, "text": <str>, "bbox": [x, y, w, h]}
 
 Usage
 -----
-  # Run from the repo root (local or on a compute node)
+  # Run from the repo root (on a login / compile node with internet)
   python prepare_data.py                       # defaults to ./data
   python prepare_data.py --data_dir /scratch/alpine/$USER/vg_data
 
@@ -56,9 +56,8 @@ def _download(url: str | list[str], dest: Path, retries: int = 3) -> None:
     in order.
     """
     if dest.exists():
-        # If it looks like a zip filename, validate it
         if dest.suffix.lower() == ".zip" and not _is_valid_zip(dest):
-            print(f"  {dest.name} exists but is corrupt \u2014 re-downloading")
+            print(f"  {dest.name} exists but is corrupt — re-downloading")
             dest.unlink()
         else:
             print(f"  [skip] {dest.name} already exists")
@@ -71,7 +70,6 @@ def _download(url: str | list[str], dest: Path, retries: int = 3) -> None:
         label = f"[mirror {mirror_idx + 1}/{len(urls)}] " if len(urls) > 1 else ""
         print(f"  {label}Downloading {mirror_url} ...")
 
-        # Try wget (with --no-check-certificate for SSL issues)
         for attempt in range(1, retries + 1):
             try:
                 subprocess.check_call(
@@ -81,15 +79,14 @@ def _download(url: str | list[str], dest: Path, retries: int = 3) -> None:
                 if dest.suffix.lower() == ".zip" and not _is_valid_zip(dest):
                     print(f"  Downloaded file is not a valid zip, trying next ...")
                     dest.unlink()
-                    break  # skip to next mirror
-                return  # success
+                    break
+                return
             except subprocess.CalledProcessError:
                 if dest.exists():
                     dest.unlink()
                 if attempt < retries:
                     print(f"  wget attempt {attempt}/{retries} failed, retrying ...")
 
-        # Fallback: try curl for this mirror
         if not dest.exists():
             print(f"  wget failed; trying curl ...")
             try:
@@ -101,12 +98,11 @@ def _download(url: str | list[str], dest: Path, retries: int = 3) -> None:
                     print(f"  Downloaded file is not a valid zip, trying next ...")
                     dest.unlink()
                     continue
-                return  # success
+                return
             except subprocess.CalledProcessError:
                 if dest.exists():
                     dest.unlink()
 
-    # All mirrors exhausted
     print(f"  ERROR: Could not download from any mirror.", file=sys.stderr)
     print(f"  You can manually download the file and place it at: {dest}",
           file=sys.stderr)
@@ -124,27 +120,185 @@ def _unzip(src: Path, dest: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# RefCOCOg loading (handles both .p pickle and .json)
+# COCO images URL
 # ---------------------------------------------------------------------------
-REFCOCOG_URLS = {
-    # UMD split (Google-refexp partition, most common in papers)
-    # Primary: Wayback Machine mirror (original UNC server is dead)
-    # Fallback: original URL in case it comes back online
-    "refs": [
-        "https://web.archive.org/web/20230307030235/https://bvisionweb1.cs.unc.edu/licheng/referit/data/refcocog.zip",
-        "https://web.archive.org/web/20220413012904/https://bvisionweb1.cs.unc.edu/licheng/referit/data/refcocog.zip",
-        "https://bvisionweb1.cs.unc.edu/licheng/referit/data/refcocog.zip",
-    ],
-    "instances": "http://images.cocodataset.org/annotations/annotations_trainval2014.zip",
-}
-
 COCO_IMAGES_URL = "http://images.cocodataset.org/zips/train2014.zip"
+COCO_ANN_URL = "http://images.cocodataset.org/annotations/annotations_trainval2014.zip"
+
+# Wayback Machine mirrors for RefCOCOg (fallback only)
+REFCOCOG_ZIP_URLS = [
+    "https://web.archive.org/web/20230307030235/https://bvisionweb1.cs.unc.edu/licheng/referit/data/refcocog.zip",
+    "https://web.archive.org/web/20220413012904/https://bvisionweb1.cs.unc.edu/licheng/referit/data/refcocog.zip",
+    "https://bvisionweb1.cs.unc.edu/licheng/referit/data/refcocog.zip",
+]
 
 
+# ---------------------------------------------------------------------------
+# HuggingFace datasets approach (PRIMARY — fast and reliable)
+# ---------------------------------------------------------------------------
+def _try_hf_refcocog(data_dir: Path, coco_ann_cache: Path) -> bool:
+    """Download RefCOCOg annotations via HuggingFace datasets library.
+
+    Returns True on success, False if the library is unavailable or fails.
+    """
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        print("  'datasets' library not installed — will try zip mirrors")
+        return False
+
+    try:
+        print("  Loading RefCOCOg from HuggingFace (jxu124/refcocog) ...")
+        ds = load_dataset("jxu124/refcocog", trust_remote_code=True)
+    except Exception as e:
+        print(f"  HuggingFace download failed: {e}")
+        return False
+
+    # Discover available splits
+    available = list(ds.keys())
+    print(f"  HF splits available: {available}")
+
+    # Peek at column names
+    first_split = ds[available[0]]
+    cols = first_split.column_names
+    print(f"  Columns: {cols}")
+
+    # Determine which column holds the referring text
+    text_col = None
+    for candidate in ("sent", "sentence", "sentences", "text", "caption", "expression"):
+        if candidate in cols:
+            text_col = candidate
+            break
+
+    # Determine bbox column
+    bbox_col = None
+    for candidate in ("bbox", "bounding_box", "box"):
+        if candidate in cols:
+            bbox_col = candidate
+            break
+
+    if text_col is None or bbox_col is None:
+        # If HF dataset doesn't have bbox directly, we need COCO instances
+        # to look up bbox from ann_id.  Fall through to handle that.
+        if "ann_id" in cols:
+            return _try_hf_with_coco_bbox(ds, data_dir, coco_ann_cache, text_col)
+        print(f"  Could not find text column ({text_col}) or bbox column ({bbox_col}) — falling back")
+        return False
+
+    # Map HF split names → our split names
+    split_map = {}
+    for s in available:
+        if s == "train":
+            split_map[s] = "train"
+        elif s in ("val", "validation", "test"):
+            split_map[s] = "test"
+
+    if not split_map:
+        print("  No usable splits found — falling back")
+        return False
+
+    for hf_split, our_split in split_map.items():
+        split_data = ds[hf_split]
+        entries = []
+        for row in split_data:
+            # Handle text — could be a string or list of sentences
+            text = row[text_col]
+            if isinstance(text, list):
+                # Multiple sentences per ref — expand
+                for t in text:
+                    if isinstance(t, dict):
+                        t = t.get("sent") or t.get("raw") or t.get("text", "")
+                    if t:
+                        entries.append({
+                            "image_id": row["image_id"],
+                            "text": str(t),
+                            "bbox": list(row[bbox_col]),
+                        })
+            elif text:
+                entries.append({
+                    "image_id": row["image_id"],
+                    "text": str(text),
+                    "bbox": list(row[bbox_col]),
+                })
+
+        split_dir = data_dir / our_split
+        split_dir.mkdir(parents=True, exist_ok=True)
+        out_path = split_dir / "annotations_1.json"
+        with open(out_path, "w") as f:
+            json.dump(entries, f)
+        print(f"  {our_split}: {len(entries)} referring expressions → {out_path}")
+
+    return True
+
+
+def _try_hf_with_coco_bbox(ds, data_dir: Path, coco_ann_cache: Path,
+                            text_col: str | None) -> bool:
+    """HF dataset has ann_id but no bbox — look up bbox from COCO instances."""
+    # Download COCO annotations for bbox lookup
+    instances_zip = coco_ann_cache / "annotations_trainval2014.zip"
+    _download(COCO_ANN_URL, instances_zip)
+    instances_extract = coco_ann_cache / "coco_ann"
+    _unzip(instances_zip, instances_extract)
+    instances_path = instances_extract / "annotations" / "instances_train2014.json"
+    if not instances_path.exists():
+        candidates = list(instances_extract.rglob("instances_train2014.json"))
+        if not candidates:
+            return False
+        instances_path = candidates[0]
+
+    with open(instances_path, "r") as f:
+        coco_data = json.load(f)
+    coco_anns = {ann["id"]: ann for ann in coco_data["annotations"]}
+
+    available = list(ds.keys())
+    split_map = {}
+    for s in available:
+        if s == "train":
+            split_map[s] = "train"
+        elif s in ("val", "validation", "test"):
+            split_map[s] = "test"
+
+    for hf_split, our_split in split_map.items():
+        split_data = ds[hf_split]
+        entries = []
+        for row in split_data:
+            ann_id = row.get("ann_id")
+            if ann_id is None or ann_id not in coco_anns:
+                continue
+            bbox = coco_anns[ann_id]["bbox"]
+
+            # Get text
+            if text_col and text_col in row:
+                text = row[text_col]
+            else:
+                text = row.get("sent") or row.get("sentences") or ""
+
+            if isinstance(text, list):
+                for t in text:
+                    if isinstance(t, dict):
+                        t = t.get("sent") or t.get("raw") or ""
+                    if t:
+                        entries.append({"image_id": row["image_id"], "text": str(t), "bbox": bbox})
+            elif text:
+                entries.append({"image_id": row["image_id"], "text": str(text), "bbox": bbox})
+
+        split_dir = data_dir / our_split
+        split_dir.mkdir(parents=True, exist_ok=True)
+        out_path = split_dir / "annotations_1.json"
+        with open(out_path, "w") as f:
+            json.dump(entries, f)
+        print(f"  {our_split}: {len(entries)} referring expressions → {out_path}")
+
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Legacy zip-based approach (FALLBACK — Wayback Machine mirrors)
+# ---------------------------------------------------------------------------
 def _load_refs(refs_path: Path) -> list[dict]:
     """Load RefCOCOg refs from pickle or JSON."""
     suffix = refs_path.suffix.lower()
-    if suffix == ".p" or suffix == ".pkl":
+    if suffix in (".p", ".pkl"):
         with open(refs_path, "rb") as f:
             return pickle.load(f)
     elif suffix == ".json":
@@ -154,16 +308,6 @@ def _load_refs(refs_path: Path) -> list[dict]:
         raise ValueError(f"Unknown refs format: {refs_path}")
 
 
-def _load_instances(instances_path: Path) -> dict[int, dict]:
-    """Load COCO instances and return {ann_id: annotation} mapping."""
-    with open(instances_path, "r") as f:
-        data = json.load(f)
-    return {ann["id"]: ann for ann in data["annotations"]}
-
-
-# ---------------------------------------------------------------------------
-# Build annotations
-# ---------------------------------------------------------------------------
 def _build_split_annotations(
     refs: list[dict],
     coco_anns: dict[int, dict],
@@ -178,7 +322,7 @@ def _build_split_annotations(
         if ann_id not in coco_anns:
             continue
         coco_ann = coco_anns[ann_id]
-        bbox = coco_ann["bbox"]  # [x, y, w, h] — already in COCO format
+        bbox = coco_ann["bbox"]
         image_id = ref["image_id"]
         for sentence in ref.get("sentences", []):
             text = sentence.get("sent") or sentence.get("raw", "")
@@ -190,6 +334,56 @@ def _build_split_annotations(
                 "bbox": bbox,
             })
     return entries
+
+
+def _fallback_zip_refcocog(data_dir: Path, cache: Path) -> None:
+    """Download RefCOCOg from Wayback Machine zip mirrors (slow fallback)."""
+    print("  Trying Wayback Machine mirrors (may be slow) ...")
+    refcocog_zip = cache / "refcocog.zip"
+    _download(REFCOCOG_ZIP_URLS, refcocog_zip)
+    refcocog_extract = cache / "refcocog"
+    _unzip(refcocog_zip, refcocog_extract)
+
+    # Find refs file
+    refs_candidates = (
+        list(refcocog_extract.rglob("refs*.p"))
+        + list(refcocog_extract.rglob("refs*.json"))
+    )
+    refs_path = None
+    for c in refs_candidates:
+        if "umd" in c.name.lower():
+            refs_path = c
+            break
+    if refs_path is None and refs_candidates:
+        refs_path = refs_candidates[0]
+    if refs_path is None:
+        print("ERROR: No refs file found in RefCOCOg download.", file=sys.stderr)
+        sys.exit(1)
+    print(f"  Using refs: {refs_path}")
+
+    # COCO instances for bbox lookup
+    instances_zip = cache / "annotations_trainval2014.zip"
+    _download(COCO_ANN_URL, instances_zip)
+    instances_extract = cache / "coco_ann"
+    _unzip(instances_zip, instances_extract)
+    instances_path = instances_extract / "annotations" / "instances_train2014.json"
+    if not instances_path.exists():
+        instances_path = list(instances_extract.rglob("instances_train2014.json"))[0]
+
+    refs = _load_refs(refs_path)
+    with open(instances_path, "r") as f:
+        coco_data = json.load(f)
+    coco_anns = {ann["id"]: ann for ann in coco_data["annotations"]}
+
+    splits = {"train": "train", "test": "val"}
+    for our_split, refcocog_split in splits.items():
+        split_dir = data_dir / our_split
+        split_dir.mkdir(parents=True, exist_ok=True)
+        anns = _build_split_annotations(refs, coco_anns, refcocog_split)
+        out_path = split_dir / "annotations_1.json"
+        with open(out_path, "w") as f:
+            json.dump(anns, f)
+        print(f"  {our_split}: {len(anns)} referring expressions → {out_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +399,6 @@ def _link_images(
     needed_ids = {ann["image_id"] for ann in annotations}
     linked = 0
     for img_id in needed_ids:
-        # COCO 2014 filename convention
         src = coco_img_dir / f"COCO_train2014_{img_id:012d}.jpg"
         dst = dest_dir / f"{img_id}.jpg"
         if dst.exists():
@@ -215,7 +408,6 @@ def _link_images(
         try:
             os.symlink(src.resolve(), dst)
         except OSError:
-            # Filesystem doesn't support symlinks (e.g. some scratch mounts)
             shutil.copy2(src, dst)
         linked += 1
     print(f"  Linked/copied {linked} new images → {dest_dir}")
@@ -248,7 +440,6 @@ def main() -> None:
     _unzip(coco_zip, coco_extract)
     coco_img_dir = coco_extract / "train2014"
     if not coco_img_dir.exists():
-        # Some zips nest differently
         alt = list(coco_extract.rglob("train2014"))
         if alt:
             coco_img_dir = alt[0]
@@ -258,60 +449,38 @@ def main() -> None:
     print(f"  COCO images at: {coco_img_dir}")
 
     # ── 2. Download RefCOCOg annotations ────────────────────────────
+    #    Primary:  HuggingFace datasets (fast, reliable)
+    #    Fallback: Wayback Machine zip mirrors (slow, often broken)
     print("\n[2/4] RefCOCOg annotations")
-    refcocog_zip = cache / "refcocog.zip"
-    _download(REFCOCOG_URLS["refs"], refcocog_zip)
-    refcocog_extract = cache / "refcocog"
-    _unzip(refcocog_zip, refcocog_extract)
 
-    # Find refs file (could be refs(umd).p, refs(google).p, etc.)
-    refs_candidates = list(refcocog_extract.rglob("refs*.p")) + list(refcocog_extract.rglob("refs*.json"))
-    # Prefer UMD split
-    refs_path = None
-    for c in refs_candidates:
-        if "umd" in c.name.lower():
-            refs_path = c
-            break
-    if refs_path is None and refs_candidates:
-        refs_path = refs_candidates[0]
-    if refs_path is None:
-        print("ERROR: No refs file found in RefCOCOg download.", file=sys.stderr)
-        sys.exit(1)
-    print(f"  Using refs: {refs_path}")
+    # Check if annotations already exist
+    train_ann = data_dir / "train" / "annotations_1.json"
+    test_ann = data_dir / "test" / "annotations_1.json"
+    if train_ann.exists() and test_ann.exists():
+        print("  [skip] Annotations already built")
+    else:
+        # Try HuggingFace first
+        success = _try_hf_refcocog(data_dir, cache)
+        if not success:
+            # Fall back to zip mirrors
+            _fallback_zip_refcocog(data_dir, cache)
 
-    # COCO instances for bbox lookup
-    instances_zip = cache / "annotations_trainval2014.zip"
-    _download(REFCOCOG_URLS["instances"], instances_zip)
-    instances_extract = cache / "coco_ann"
-    _unzip(instances_zip, instances_extract)
-    instances_path = instances_extract / "annotations" / "instances_train2014.json"
-    if not instances_path.exists():
-        instances_path = list(instances_extract.rglob("instances_train2014.json"))[0]
-
-    # ── 3. Build annotation JSONs ───────────────────────────────────
-    print("\n[3/4] Building annotations")
-    refs = _load_refs(refs_path)
-    coco_anns = _load_instances(instances_path)
-
-    splits = {
-        "train": "train",
-        "test": "val",  # RefCOCOg 'val' split → our test split
-    }
-
-    for our_split, refcocog_split in splits.items():
-        split_dir = data_dir / our_split
-        split_dir.mkdir(parents=True, exist_ok=True)
-
-        anns = _build_split_annotations(refs, coco_anns, refcocog_split)
-        out_path = split_dir / "annotations_1.json"
-        with open(out_path, "w") as f:
-            json.dump(anns, f)
-        print(f"  {our_split}: {len(anns)} referring expressions → {out_path}")
+    # ── 3. Verify annotations ──────────────────────────────────────
+    print("\n[3/4] Verifying annotations")
+    for split in ("train", "test"):
+        ann_path = data_dir / split / "annotations_1.json"
+        if ann_path.exists():
+            with open(ann_path) as f:
+                count = len(json.load(f))
+            print(f"  {split}: {count} entries")
+        else:
+            print(f"  ERROR: {ann_path} not found!", file=sys.stderr)
+            sys.exit(1)
 
     # ── 4. Link images ──────────────────────────────────────────────
     print("\n[4/4] Linking images to split directories")
-    for our_split in splits:
-        split_dir = data_dir / our_split
+    for split in ("train", "test"):
+        split_dir = data_dir / split
         with open(split_dir / "annotations_1.json") as f:
             anns = json.load(f)
         _link_images(anns, coco_img_dir, split_dir / "images")

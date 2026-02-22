@@ -44,33 +44,24 @@ module load anaconda
 
 ENV_NAME="vg_env"
 if ! conda env list | grep -q "^${ENV_NAME} "; then
-    echo ">>> Creating conda environment '${ENV_NAME}' ..."
-    conda create -y -n "${ENV_NAME}" python=3.11
+    echo "ERROR: Conda environment '${ENV_NAME}' not found!" >&2
+    echo "       Create it on a login/compile node first." >&2
+    exit 1
 fi
 conda activate "${ENV_NAME}"
-
-pip install --quiet --upgrade pip
-pip install --quiet -r "${SLURM_SUBMIT_DIR}/requirements.txt"
+echo ">>> Python: $(python --version) | PyTorch: $(python -c 'import torch; print(torch.__version__)')"
 
 # -------------------------------------------------------------------
-# 2. Verify data is present (must be prepared BEFORE submitting)
+# 2. Verify data is present (no internet on compute nodes)
 # -------------------------------------------------------------------
-# NOTE: Alpine compute nodes have NO internet access.
-# Run prepare_data.py from a login or compile node first:
-#   acompile            # or: ssh login.rc.colorado.edu
-#   conda activate vg_env
-#   python prepare_data.py --data_dir ./data --cache_dir ./.cache
 SRC_DATA="${SLURM_SUBMIT_DIR}/data"
 
 if [[ ! -d "${SRC_DATA}/train/images" ]] || [[ ! -f "${SRC_DATA}/train/annotations_1.json" ]]; then
     echo "ERROR: Data not found at ${SRC_DATA}" >&2
-    echo "       Compute nodes have no internet — prepare data first:" >&2
-    echo "         acompile" >&2
-    echo "         conda activate vg_env" >&2
-    echo "         python prepare_data.py --data_dir ./data --cache_dir ./.cache" >&2
+    echo "       Run prepare_data.py on a login/compile node first." >&2
     exit 1
 else
-    echo ">>> Data already present at ${SRC_DATA}"
+    echo ">>> Data present at ${SRC_DATA}"
 fi
 
 # -------------------------------------------------------------------
@@ -90,7 +81,8 @@ fi
 # -------------------------------------------------------------------
 export HF_HOME="/scratch/alpine/${USER}/hf_cache"
 export TRANSFORMERS_CACHE="${HF_HOME}"
-mkdir -p "${HF_HOME}"
+export TORCH_HOME="/scratch/alpine/${USER}/torch_cache"
+mkdir -p "${HF_HOME}" "${TORCH_HOME}"
 
 # -------------------------------------------------------------------
 # 5. Performance flags for A100
