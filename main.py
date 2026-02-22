@@ -75,6 +75,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--amp", action="store_true", default=True,
                     help="Use automatic mixed precision (default: on)")
     p.add_argument("--no-amp", dest="amp", action="store_false")
+    p.add_argument("--max_samples", type=int, default=None,
+                    help="Cap train/test samples (default: use full dataset)")
     p.add_argument("--fast", action="store_true", default=False,
                     help="Enable TF32 + cuDNN benchmark for max GPU throughput")
     return p.parse_args()
@@ -97,7 +99,8 @@ def main() -> None:
     test_dir = os.path.join(args.data_dir, "test")
     train_loader = GetDataloader(
         train_dir, batch_size=args.batch_size, split="train",
-        num_workers=args.num_workers, image_size=args.image_size,
+        num_workers=args.num_workers, max_samples=args.max_samples,
+        image_size=args.image_size,
     )
     test_loader = GetDataloader(
         test_dir, batch_size=args.batch_size, split="test",

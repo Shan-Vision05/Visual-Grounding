@@ -83,11 +83,7 @@ def GetDataloader(
     """Build a DataLoader for *split* with optional sample-count capping."""
     full_ds = VG_Dataset(root_dir, image_size=image_size)
 
-    if max_samples is None:
-        limit = {"train": 10_000, "test": 2_000}.get(split, len(full_ds))
-    else:
-        limit = max_samples
-    limit = min(limit, len(full_ds))
+    limit = min(max_samples, len(full_ds)) if max_samples is not None else len(full_ds)
 
     ds: Dataset = Subset(full_ds, list(range(limit))) if limit < len(full_ds) else full_ds
 
