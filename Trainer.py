@@ -15,7 +15,7 @@ class VisualGroundingTrainer:
 
     def __init__(self, model, device, train_dataloader, test_dataloader,
                  lr=3e-4, weight_decay=1e-4, use_amp=True, image_size=512,
-                 log_every: int = 20):
+                 log_every: int = 20, epochs: int = 40):
         self.device = device
         self.model = model.to(device)
         self.train_dataloader = train_dataloader
@@ -32,6 +32,11 @@ class VisualGroundingTrainer:
         self.use_amp = use_amp and device.type == "cuda"
         self.scaler = GradScaler("cuda", enabled=self.use_amp)
 
+        # Cosine-annealing LR schedule
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer, T_max=epochs, eta_min=1e-6,
+        )
+
     # ------------------------------------------------------------------
     @staticmethod
     def _move_text_to_device(text_batch: dict, device: torch.device) -> dict:
@@ -41,6 +46,10 @@ class VisualGroundingTrainer:
     @staticmethod
     def _accuracy(y_true: torch.Tensor, y_pred: torch.Tensor) -> float:
         return (torch.eq(y_true, y_pred).sum().item() / len(y_pred)) * 100.0
+
+    def get_lr(self) -> float:
+        """Return current learning rate."""
+        return self.scheduler.get_last_lr()[0]
 
     # ------------------------------------------------------------------
     def train_step(self, epoch: int) -> tuple[float, float]:
@@ -80,6 +89,8 @@ class VisualGroundingTrainer:
                     "  Epoch %2d Train [%3d/%d] | loss %.4f | acc %.1f%% | %.1fs elapsed | ETA %.0fs",
                     epoch, i, n_batches, avg_loss, avg_acc, elapsed, eta,
                 )
+
+        self.scheduler.step()
 
         n = len(self.train_dataloader)
         return total_loss / n, total_acc / n

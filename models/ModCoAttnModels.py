@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
-from transformers import BertTokenizer
+from transformers import BertModel
 
-from .TextModels import SubjectTextEncoder, LocationTextEncoder, RelationshipTextEncoder
+from .TextModels import TextProjectionHead
 from .VisionModels import VisionEncoder, LocationVisionEncoder, RelationshipVisionEncoder
 
 
@@ -97,18 +97,21 @@ class VisualGrounding(nn.Module):
 
     def __init__(self, image_size: int = 512):
         super().__init__()
-        tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-        vocab_size = tokenizer.vocab_size
+
+        # Shared frozen BERT backbone (single forward pass for all branches)
+        self.bert = BertModel.from_pretrained("bert-base-uncased")
+        for p in self.bert.parameters():
+            p.requires_grad = False
 
         # Vision
         self.vision_encoder = VisionEncoder(input_size=(image_size, image_size))
         self.loc_vision_encoder = LocationVisionEncoder(image_size=image_size)
         self.rel_vision_encoder = RelationshipVisionEncoder(image_size=image_size)
 
-        # Text
-        self.subject_text_encoder = SubjectTextEncoder(vocab_size=vocab_size)
-        self.loc_text_encoder = LocationTextEncoder(vocab_size=vocab_size)
-        self.rel_text_encoder = RelationshipTextEncoder(vocab_size=vocab_size)
+        # Text projection heads (lightweight, trainable)
+        self.subject_proj = TextProjectionHead(in_dim=768, out_dim=512)
+        self.loc_proj = TextProjectionHead(in_dim=768, out_dim=512)
+        self.rel_proj = TextProjectionHead(in_dim=768, out_dim=512)
 
         # Fusion
         self.co_attn_scorer = CoAttentionScorer()
@@ -119,12 +122,20 @@ class VisualGrounding(nn.Module):
         input_ids: torch.Tensor,
         attn_mask: torch.Tensor,
     ):
+        # --- shared BERT forward (single pass, no grad) ---
+        with torch.no_grad():
+            bert_cls = self.bert(
+                input_ids.squeeze(1),
+                attention_mask=attn_mask.squeeze(1),
+            ).last_hidden_state[:, 0]  # (B, 768) [CLS] token
+
+        # --- branch-specific text projections ---
+        text_img = self.subject_proj(bert_cls)
+        text_loc = self.loc_proj(bert_cls)
+        text_rel = self.rel_proj(bert_cls)
+
+        # --- vision ---
         proposals, img_feats = self.vision_encoder(image)
-
-        text_img = self.subject_text_encoder(input_ids.squeeze(1), attn_mask.squeeze(1))
-        text_loc = self.loc_text_encoder(input_ids.squeeze(1), attn_mask.squeeze(1))
-        text_rel = self.rel_text_encoder(input_ids.squeeze(1), attn_mask.squeeze(1))
-
         loc_feats = self.loc_vision_encoder(proposals)
         rel_feats = self.rel_vision_encoder(proposals)
 

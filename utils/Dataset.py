@@ -21,7 +21,7 @@ class VG_Dataset(Dataset):
     IMAGENET_MEAN = [0.485, 0.456, 0.406]
     IMAGENET_STD = [0.229, 0.224, 0.225]
 
-    def __init__(self, root_dir: str, image_size: int = 512, max_length: int = 15):
+    def __init__(self, root_dir: str, image_size: int = 512, max_length: int = 40):
         self.root_dir = root_dir
         self.max_length = max_length
         self.image_size = image_size

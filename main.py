@@ -67,7 +67,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch_size", type=int, default=16)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--weight_decay", type=float, default=1e-4)
-    p.add_argument("--patience", type=int, default=5,
+    p.add_argument("--patience", type=int, default=8,
                     help="Early-stopping patience (epochs)")
     p.add_argument("--num_workers", type=int, default=4)
     p.add_argument("--seed", type=int, default=42)
@@ -114,6 +114,7 @@ def main() -> None:
         model, device, train_loader, test_loader,
         lr=args.lr, weight_decay=args.weight_decay,
         use_amp=args.amp, image_size=args.image_size,
+        epochs=args.epochs,
     )
 
     # --- training loop ---
@@ -126,8 +127,8 @@ def main() -> None:
         val_loss, val_acc = trainer.eval_step(epoch)
 
         logger.info(
-            "Epoch %3d | TrainLoss %.4f | TrainAcc %.2f%% | ValLoss %.4f | ValAcc %.2f%%",
-            epoch, train_loss, train_acc, val_loss, val_acc,
+            "Epoch %3d | TrainLoss %.4f | TrainAcc %.2f%% | ValLoss %.4f | ValAcc %.2f%% | LR %.2e",
+            epoch, train_loss, train_acc, val_loss, val_acc, trainer.get_lr(),
         )
 
         if val_loss < best_val_loss:
