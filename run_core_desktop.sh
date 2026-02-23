@@ -17,13 +17,21 @@ echo "Checking GPUs..."
 nvidia-smi --query-gpu=index,name,memory.total,memory.free --format=csv
 echo ""
 
-# Load conda environment
+# Load conda environment (if not already activated)
 echo "Loading environment..."
-module load anaconda
-conda activate vg_env
+if [[ "$CONDA_DEFAULT_ENV" != "vg_env" ]]; then
+    module load anaconda 2>/dev/null || true
+    source activate vg_env || conda activate vg_env || true
+else
+    echo "  Environment 'vg_env' already active ✓"
+fi
 
-# Navigate to project directory
-cd /home/shan/ws/repos/Visual-Grounding
+# Navigate to project directory (if not already there)
+PROJECT_DIR="/projects/${USER}/Visual-Grounding"
+if [[ "$PWD" != "$PROJECT_DIR" ]]; then
+    cd "$PROJECT_DIR"
+fi
+echo "  Working directory: $PWD"
 
 # Run training with optimized settings
 echo "Starting training..."
