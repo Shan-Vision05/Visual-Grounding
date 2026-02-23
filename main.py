@@ -65,8 +65,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output_dir", type=str, default="./outputs",
                     help="Where to save checkpoints and logs")
     p.add_argument("--epochs", type=int, default=40)
-    p.add_argument("--batch_size", type=int, default=48,
-                    help="Batch size (default: 48, 24 per GPU with 2xRTX8000)")
+    p.add_argument("--batch_size", type=int, default=128,
+                    help="Batch size (default: 128, optimized for single RTX 8000 w/ 46GB)")
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--weight_decay", type=float, default=1e-4)
     p.add_argument("--patience", type=int, default=8,
@@ -96,8 +96,7 @@ def main() -> None:
 
     # --- device ---
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    num_gpus = torch.cuda.device_count()
-    logger.info("Using device: %s | GPUs available: %d", device, num_gpus)
+    logger.info("Using device: %s (GPU: %s)", device, torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A")
 
     # --- data ---
     train_dir = os.path.join(args.data_dir, "train")
@@ -115,12 +114,6 @@ def main() -> None:
 
     # --- model & trainer ---
     model = VisualGrounding(image_size=args.image_size)
-    
-    # Enable multi-GPU training if available
-    if num_gpus > 1:
-        logger.info("🚀 Enabling DataParallel across %d GPUs", num_gpus)
-        model = nn.DataParallel(model)
-        # Scale batch size is already handled by user; effective batch = batch_size * num_gpus
     trainer = VisualGroundingTrainer(
         model, device, train_loader, test_loader,
         lr=args.lr, weight_decay=args.weight_decay,
@@ -146,11 +139,7 @@ def main() -> None:
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            # Handle DataParallel model state_dict
-            if isinstance(model, nn.DataParallel):
-                best_state = model.module.state_dict()
-            else:
-                best_state = model.state_dict()
+            best_state = model.state_dict()
             epochs_no_improve = 0
             ckpt_path = os.path.join(args.output_dir, "best_model.pt")
             torch.save(best_state, ckpt_path)
