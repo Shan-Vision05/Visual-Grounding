@@ -19,6 +19,7 @@ import sys
 
 import numpy as np
 import torch
+import torch.nn as nn
 
 from models.ModCoAttnModels import VisualGrounding
 from Trainer import VisualGroundingTrainer
