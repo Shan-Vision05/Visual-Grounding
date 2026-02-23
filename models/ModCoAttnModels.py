@@ -58,20 +58,28 @@ class CoAttentionScorer(nn.Module):
         img_feats: torch.Tensor,
         loc_feats: torch.Tensor,
         rel_feats: torch.Tensor,
+        text_pad_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         obj_feats = img_feats.mean(dim=[3, 4])  # (B, N, C)
 
-        text_img_feats = text_img_feats.unsqueeze(1)
-        text_loc_feats = text_loc_feats.unsqueeze(1)
-        text_rel_feats = text_rel_feats.unsqueeze(1)
-
-        attn_img, _ = self.cross_attn_img(query=obj_feats, key=text_img_feats, value=text_img_feats)
+        # text_*_feats: (B, seq_len, C) — full token sequence
+        # key_padding_mask: (B, seq_len), True = padded position
+        attn_img, _ = self.cross_attn_img(
+            query=obj_feats, key=text_img_feats, value=text_img_feats,
+            key_padding_mask=text_pad_mask,
+        )
         attn_img = self.norm_img(attn_img + obj_feats)
 
-        attn_loc, _ = self.cross_attn_loc(query=loc_feats, key=text_loc_feats, value=text_loc_feats)
+        attn_loc, _ = self.cross_attn_loc(
+            query=loc_feats, key=text_loc_feats, value=text_loc_feats,
+            key_padding_mask=text_pad_mask,
+        )
         attn_loc = self.norm_loc(attn_loc + loc_feats)
 
-        attn_rel, _ = self.cross_attn_rel(query=rel_feats, key=text_rel_feats, value=text_rel_feats)
+        attn_rel, _ = self.cross_attn_rel(
+            query=rel_feats, key=text_rel_feats, value=text_rel_feats,
+            key_padding_mask=text_pad_mask,
+        )
         attn_rel = self.norm_rel(attn_rel + rel_feats)
 
         weights = torch.softmax(
@@ -91,7 +99,7 @@ class VisualGrounding(nn.Module):
     Architecture:
         Vision:  Faster R-CNN proposals → attribute (RoI), location (box geom),
                  relationship (Δ-neighbour) features
-        Text:    Three independent transformer encoders (subject, location, relationship)
+        Text:    Shared frozen BERT backbone → three projection heads
         Fusion:  Bidirectional co-attention per branch → weighted concatenation → MLP scorer
     """
 
@@ -122,17 +130,20 @@ class VisualGrounding(nn.Module):
         input_ids: torch.Tensor,
         attn_mask: torch.Tensor,
     ):
-        # --- shared BERT forward (single pass, no grad) ---
+        # --- shared BERT forward (single pass, frozen) ---
         with torch.no_grad():
-            bert_cls = self.bert(
+            bert_seq = self.bert(
                 input_ids.squeeze(1),
                 attention_mask=attn_mask.squeeze(1),
-            ).last_hidden_state[:, 0]  # (B, 768) [CLS] token
+            ).last_hidden_state  # (B, seq_len, 768)
 
-        # --- branch-specific text projections ---
-        text_img = self.subject_proj(bert_cls)
-        text_loc = self.loc_proj(bert_cls)
-        text_rel = self.rel_proj(bert_cls)
+        # Padding mask for cross-attention (True = pad token)
+        text_pad_mask = (attn_mask.squeeze(1) == 0)
+
+        # --- branch-specific projections (B, seq_len, 768) → (B, seq_len, 512) ---
+        text_img = self.subject_proj(bert_seq)
+        text_loc = self.loc_proj(bert_seq)
+        text_rel = self.rel_proj(bert_seq)
 
         # --- vision ---
         proposals, img_feats = self.vision_encoder(image)
@@ -142,5 +153,6 @@ class VisualGrounding(nn.Module):
         scores = self.co_attn_scorer(
             text_img, text_loc, text_rel,
             img_feats, loc_feats, rel_feats,
+            text_pad_mask=text_pad_mask,
         )
         return proposals, scores

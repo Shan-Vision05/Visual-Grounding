@@ -79,8 +79,9 @@ class VisionEncoder(nn.Module):
 
         for i in range(batch_size):
             boxes = results[i]["boxes"][: n_obj]
-            perm = torch.randperm(boxes.size(0), device=device)
-            boxes = boxes[perm]
+            if self.training:
+                perm = torch.randperm(boxes.size(0), device=device)
+                boxes = boxes[perm]
             new_boxes.append(boxes)
 
             for j in range(min(len(boxes), n_obj)):
@@ -205,14 +206,18 @@ class RelationshipVisionEncoder(nn.Module):
         k = min(self.NUM_NEIGHBORS, n - 1)
         _, nn_idx = dists.topk(k, largest=False)  # (n, k)
 
-        for i in range(n):
-            for j_idx in range(k):
-                j = nn_idx[i, j_idx]
-                off = j_idx * 4
-                rel[i, off] = cx[j] - cx[i]
-                rel[i, off + 1] = cy[j] - cy[i]
-                rel[i, off + 2] = w[j] - w[i]
-                rel[i, off + 3] = h[j] - h[i]
+        # Vectorized: gather neighbour properties and compute deltas
+        nn_cx = cx[nn_idx]  # (n, k)
+        nn_cy = cy[nn_idx]
+        nn_w = w[nn_idx]
+        nn_h = h[nn_idx]
+        deltas = torch.stack([
+            nn_cx - cx.unsqueeze(1),
+            nn_cy - cy.unsqueeze(1),
+            nn_w - w.unsqueeze(1),
+            nn_h - h.unsqueeze(1),
+        ], dim=-1)  # (n, k, 4)
+        rel[:n, :k * 4] = deltas.reshape(n, -1)
 
         return rel
 

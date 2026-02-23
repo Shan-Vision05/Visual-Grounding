@@ -54,9 +54,9 @@ class VG_Dataset(Dataset):
     def __getitem__(self, index: int):
         ann = self.annotations[index]
         image_id = ann["image_id"]
-        image = self.transforms(
-            Image.open(os.path.join(self.root_dir, "images", f"{image_id}.jpg"))
-        )
+        pil_img = Image.open(os.path.join(self.root_dir, "images", f"{image_id}.jpg"))
+        orig_w, orig_h = pil_img.size
+        image = self.transforms(pil_img)
 
         text_encoded = self.tokenizer(
             ann["text"],
@@ -68,7 +68,13 @@ class VG_Dataset(Dataset):
             return_tensors="pt",
         )
 
-        bbox = torch.tensor(ann["bbox"], dtype=torch.float32) / self.image_size
+        # Normalise bbox [x, y, w, h] by *original* image dims so that
+        # bbox * image_size gives coordinates in the resized image space
+        bbox = torch.tensor(ann["bbox"], dtype=torch.float32)
+        bbox[0] /= orig_w   # x
+        bbox[1] /= orig_h   # y
+        bbox[2] /= orig_w   # w
+        bbox[3] /= orig_h   # h
         return image, text_encoded, bbox
 
 
@@ -94,4 +100,5 @@ def GetDataloader(
         num_workers=num_workers,
         pin_memory=True,
         drop_last=False,
+        persistent_workers=(num_workers > 0),
     )

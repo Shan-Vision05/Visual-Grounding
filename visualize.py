@@ -83,7 +83,7 @@ def unnormalize(tensor: torch.Tensor) -> np.ndarray:
     return img.clamp(0, 1).permute(1, 2, 0).numpy()
 
 
-def tokenize_query(text: str, tokenizer: BertTokenizer, max_length: int = 15):
+def tokenize_query(text: str, tokenizer: BertTokenizer, max_length: int = 40):
     """Tokenize a single query string into model-ready tensors."""
     enc = tokenizer(
         text,

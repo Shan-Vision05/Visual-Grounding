@@ -123,12 +123,14 @@ def main() -> None:
     epochs_no_improve = 0
 
     for epoch in range(1, args.epochs + 1):
-        train_loss, train_acc = trainer.train_step(epoch)
-        val_loss, val_acc = trainer.eval_step(epoch)
+        train_loss, train_acc, train_iou = trainer.train_step(epoch)
+        val_loss, val_acc, val_iou = trainer.eval_step(epoch)
 
         logger.info(
-            "Epoch %3d | TrainLoss %.4f | TrainAcc %.2f%% | ValLoss %.4f | ValAcc %.2f%% | LR %.2e",
-            epoch, train_loss, train_acc, val_loss, val_acc, trainer.get_lr(),
+            "Epoch %3d | TrLoss %.4f | TrAcc %.1f%% | TrIoU@.5 %.1f%% "
+            "| VaLoss %.4f | VaAcc %.1f%% | VaIoU@.5 %.1f%% | LR %.2e",
+            epoch, train_loss, train_acc, train_iou,
+            val_loss, val_acc, val_iou, trainer.get_lr(),
         )
 
         if val_loss < best_val_loss:

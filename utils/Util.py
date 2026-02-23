@@ -45,6 +45,36 @@ def CreateBatchLabels(
     return torch.tensor(indices)
 
 
+def compute_acc_at_iou(
+    proposals: list[torch.Tensor],
+    pred_indices: torch.Tensor,
+    gt_boxes_norm: torch.Tensor,
+    image_size: int = 512,
+    threshold: float = 0.5,
+) -> float:
+    """Compute Acc@threshold: fraction of predictions with IoU >= threshold to GT.
+
+    This is the standard visual grounding metric (Acc@0.5).
+    """
+    batch_size = len(proposals)
+    correct = 0
+    for i in range(batch_size):
+        pred_idx = pred_indices[i].item()
+        n = min(len(proposals[i]), 10)
+        if pred_idx >= n:
+            continue
+        pred_box = proposals[i][pred_idx].unsqueeze(0)  # (1, 4) x1,y1,x2,y2
+
+        # GT: [x, y, w, h] normalised → [x1, y1, x2, y2] in image coords
+        gt = gt_boxes_norm[i] * image_size
+        gt_xyxy = torch.stack([gt[0], gt[1], gt[0] + gt[2], gt[1] + gt[3]]).unsqueeze(0)
+
+        iou = box_iou(pred_box, gt_xyxy.to(pred_box.device)).item()
+        if iou >= threshold:
+            correct += 1
+    return correct / max(batch_size, 1) * 100.0
+
+
 # ---------------------------------------------------------------------------
 def plot_region_with_text(
     batch_imgs: torch.Tensor,
