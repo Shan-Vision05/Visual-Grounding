@@ -65,14 +65,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output_dir", type=str, default="./outputs",
                     help="Where to save checkpoints and logs")
     p.add_argument("--epochs", type=int, default=40)
-    p.add_argument("--batch_size", type=int, default=64,
-                    help="Batch size (default: 64, optimized for RTX 8000)")
+    p.add_argument("--batch_size", type=int, default=48,
+                    help="Batch size (default: 48, 24 per GPU with 2xRTX8000)")
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--weight_decay", type=float, default=1e-4)
     p.add_argument("--patience", type=int, default=8,
                     help="Early-stopping patience (epochs)")
-    p.add_argument("--num_workers", type=int, default=12,
-                    help="DataLoader workers (default: 12)")
+    p.add_argument("--num_workers", type=int, default=4,
+                    help="DataLoader workers (default: 4)")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--image_size", type=int, default=512)
     p.add_argument("--amp", action="store_true", default=True,

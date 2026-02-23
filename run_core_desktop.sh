@@ -35,19 +35,19 @@ echo "  Working directory: $PWD"
 
 # Run training with optimized settings
 echo "Starting training..."
-echo "  - Batch size: 64 (optimized for 46GB VRAM)"
-echo "  - Workers: 12 (for fast data loading)"
+echo "  - Batch size: 48 (24 per GPU = better GPU utilization)"
+echo "  - Workers: 4 (stable for viz nodes)"
 echo "  - Mixed precision: Enabled (AMP)"
 echo "  - TF32: Enabled (fast mode for RTX GPUs)"
-echo "  - Multi-GPU: Automatic (using both RTX 8000s)"
+echo "  - Multi-GPU: 2x RTX 8000 (46GB each)"
 echo ""
 
 python main.py \
     --data_dir ./data \
     --output_dir ./outputs \
     --epochs 40 \
-    --batch_size 64 \
-    --num_workers 12 \
+    --batch_size 48 \
+    --num_workers 4 \
     --lr 3e-4 \
     --patience 8 \
     --fast \
